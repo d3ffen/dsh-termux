@@ -10,7 +10,7 @@ record of getting it working on this device.
 | Termux | native bionic prefix (`/data/data/com.termux/files/usr`) |
 | Node | 24.22.2 (`nodejs-lts`), ABI 137, N-API 10 |
 | npm | 12.2.1 |
-| dsh | 0.2.1-rc.5 |
+| dsh | 0.2.1-rc.5, and 0.2.1-rc.2 for [dsh-purge](#pairs-with-dsh-purge) |
 | libvips | 8.18.7 |
 | Verified | `dsh --version`, `dsh web` (HTTP 200 + 941 KB JS bundle), headless run reaching `api.deepseek.com` over TLS (HTTP 401 with a dummy key = full stack works) |
 
@@ -82,6 +82,48 @@ browser at all. Pass `--no-open` explicitly any time if you want the flag too.
 The API key comes from `DEEPSEEK_API_KEY`, or the Models page in the web UI
 (stored in `~/.dsh/.credentials.yaml`). Sharing the phone's network is not
 needed: bind to `127.0.0.1` and use the browser on the same device.
+
+## Pairs with dsh-purge
+
+[YuJunZhiXue/dsh-purge](https://github.com/YuJunZhiXue/dsh-purge) patches the
+`@deepseek-ai` packages themselves, and it only targets **dsh 0.2.1-rc.2**
+(`0.2.1-rc.3` and newer are explicitly unsupported). Install that version into
+Termux, then add the plugin:
+
+```bash
+DSH_VERSION=0.2.1-rc.2 bash install-dsh-termux.sh
+
+# the plugin is not on npm; use the codeload tarball URL
+dsh plugin --profile web add --allow-build=dsh-purge \
+  https://codeload.github.com/YuJunZhiXue/dsh-purge/tar.gz/refs/heads/master
+
+# pnpm >= 11/12 skips the plugin's postinstall; run its own fallback
+cd ~/.dsh/profiles/web && node node_modules/dsh-purge/scripts/ensure-profile-bundle.mjs
+```
+
+Restart `dsh web`, then apply the patches from the **dsh-purge → Clean → Apply**
+panel (or non-interactively):
+
+```bash
+cd ~/.dsh/profiles/web
+node node_modules/dsh-purge/bin/dsh-purge.js --status   # 补丁 n/86 已清洗
+node node_modules/dsh-purge/bin/dsh-purge.js --apply
+```
+
+Two Termux-specific gotchas, both handled by this installer (re-run it after a
+plugin upgrade):
+
+- **`dsh: Permission denied` after Apply.** The plugin rewrites
+  `lib/bin.js` to inject its shim and drops the executable bit. Fix:
+  `chmod 755 "$(readlink -f "$(command -v dsh)")"`.
+- **Sharp segfaults after a version switch.** A stale `sharp/src/build` object
+  tree produces a binding that loads but crashes inside `format()`. Always clear
+  it before rebuilding: `rm -rf …/sharp/src/build`.
+
+Known non-fatal output from `--apply` on this setup: desktop-only patches report
+`na`, optional `liangshen` patches report `文件缺失`, and one pattern may report
+`漂移` (drift) because 1.1.90 is slightly ahead of the rc.2 tree. `71/86` patches
+apply cleanly and `dsh web` still boots.
 
 ## What the script does, step by step
 

@@ -111,6 +111,9 @@ SHARP_SRC="$DSH_LIB/node_modules/sharp/src"
 if compgen -G "$SHARP_SRC/build/Release/sharp-android-arm64-*.node" >/dev/null; then
   echo "    already built"
 else
+  # A stale/partial object tree yields a binding that loads but segfaults when
+  # sharp enumerates libvips formats, so always build from a clean directory.
+  rm -rf "$SHARP_SRC/build"
   ( cd "$DSH_LIB/node_modules/sharp" && \
     SHARP_FORCE_GLOBAL_LIBVIPS=1 \
     CFLAGS="--target=$NDK_TARGET" CXXFLAGS="--target=$NDK_TARGET" \
@@ -181,6 +184,15 @@ def session_persistence():
         "\t\tlet linked = false;\n\t\ttry {\n\t\t\t/* termux-rename-publish -- link(2) is EACCES on Android; rename is equally atomic. */\n\t\t\tawait rename(tmp, finalPath);\n\t\t\tlinked = true;",
         "session-persistence publish",
     )
+    # The publish call now needs rename(2); add it to the fs/promises import
+    # when the shipped module does not import it yet.
+    match = re.search(r'import \{([^}]*)\} from "node:fs/promises";', src)
+    if match is None:
+        sys.exit("session-persistence: fs/promises import not found")
+    names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+    if "rename" not in names:
+        new_import = "import { " + ", ".join(sorted(set(names) | {"rename"})) + ' } from "node:fs/promises";'
+        src = src.replace(match.group(0), new_import, 1)
     save(path, src)
     return "session-persistence: rename publish"
 
@@ -248,6 +260,10 @@ for step in (fs_local, session_persistence, attachment_local, shebang):
 PY
 
 DSH_ROOT="$DSH_LIB" NODE_BIN="$NODE_BIN" python3 "$WORK/patch-dsh.py"
+
+# Plugin shims (dsh-purge and friends) rewrite lib/bin.js and lose the exec bit,
+# which makes `dsh` fail with "Permission denied" on Android. Restore it.
+chmod 755 "$DSH_LIB/lib/bin.js"
 
 # ------------------------------------------- node-addon-require-builtin shim --
 log 7 10 "Shimming node-addon-require-builtin over --expose-internals"
